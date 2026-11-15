@@ -27,7 +27,6 @@ class Agent:
         self.system = system_prompt(registry.schemas())
         self.last_changes = None
 
-    # -- context retrieval --------------------------------------------------
     def build_context(self, task: str) -> str:
         budget = self.cfg.context_budget_chars
         parts = ["Project overview:\n" + self.index.structure()]
@@ -46,16 +45,71 @@ class Agent:
         return ctx if len(ctx) <= budget else ctx[:budget] + "\n...[context truncated]"
 
     def _fit(self, messages: list[dict]) -> list[dict]:
-        """Shrink old tool outputs until the prompt fits the context window."""
+        """Fit the prompt to the backend context limit without mutating caller history."""
+        fitted = [dict(m) for m in messages]
         limit = self.cfg.n_ctx - self.cfg.max_new_tokens - 64
-        for i, m in enumerate(messages):
-            if self.backend.count_tokens(messages) <= limit:
-                break
-            if m["role"] == "user" and m["content"].startswith("<tool_response>") and len(m["content"]) > 400:
-                messages[i] = {"role": "user", "content": m["content"][:300] + "\n...[older output trimmed]...</tool_response>"}
-        return messages
+        if limit <= 0:
+            raise ValueError("n_ctx must exceed max_new_tokens by at least 65 tokens")
 
-    # -- main entry ------------------------------------------------------
+        def size():
+            return self.backend.count_tokens(fitted)
+
+        if size() <= limit:
+            return fitted
+
+        # Compress all tool results first, preserving both the beginning and the useful tail.
+        for i, msg in enumerate(fitted):
+            content = msg.get("content", "")
+            if msg.get("role") == "user" and content.startswith("<tool_response>") and len(content) > 700:
+                fitted[i] = {"role": "user", "content": content[:350] +
+                             "\n...[tool output compressed]...\n" + content[-250:]}
+        if size() <= limit:
+            return fitted
+
+        # Drop prior conversation history, but retain the system prompt and the current task.
+        current_task = max((i for i, m in enumerate(fitted)
+                            if m.get("role") == "user" and not m.get("content", "").startswith("<tool_response>")),
+                           default=len(fitted) - 1)
+        if current_task > 1:
+            del fitted[1:current_task]
+        if size() <= limit:
+            return fitted
+
+        # If tool traffic still dominates, discard the oldest tool-result turns first.
+        while size() > limit:
+            idx = next((i for i, m in enumerate(fitted)
+                        if i > 0 and m.get("role") == "user"
+                        and m.get("content", "").startswith("<tool_response>")), None)
+            if idx is None:
+                break
+            del fitted[idx]
+            # Also discard the assistant tool-call immediately preceding that result.
+            if idx - 1 > 0 and fitted[idx - 1].get("role") == "assistant":
+                del fitted[idx - 1]
+        if size() <= limit:
+            return fitted
+
+        # Last resort: shorten the current user task/context, never the system instructions.
+        current_task = max((i for i, m in enumerate(fitted)
+                            if m.get("role") == "user" and not m.get("content", "").startswith("<tool_response>")),
+                           default=-1)
+        if current_task >= 0:
+            original = fitted[current_task]["content"]
+            low, high, best = 0, len(original), ""
+            while low <= high:
+                mid = (low + high) // 2
+                fitted[current_task]["content"] = original[:mid] + "\n...[current task/context truncated]"
+                if size() <= limit:
+                    best, low = fitted[current_task]["content"], mid + 1
+                else:
+                    high = mid - 1
+            if best:
+                fitted[current_task]["content"] = best
+                return fitted
+        if size() > limit:
+            raise ValueError("System prompt alone exceeds the configured context window; reduce tool schemas or increase n_ctx.")
+        return fitted
+
     def ask(self, task: str) -> str:
         self.last_changes = self.index.refresh()
         messages = [{"role": "system", "content": self.system}]
@@ -89,7 +143,7 @@ class Agent:
                     seen.add(key)
                     res = self.reg.call(name, args)
                     if name in MUTATING and res.startswith("OK"):
-                        seen.clear()   # state changed: re-running tests/reads is legitimate again
+                        seen.clear()
                 log.info("tool %s -> %s", name, res[:300])
                 self.emit("   " + res.splitlines()[0][:140] if res else "   (no output)")
                 results.append(f"[{name}]\n{res}")
