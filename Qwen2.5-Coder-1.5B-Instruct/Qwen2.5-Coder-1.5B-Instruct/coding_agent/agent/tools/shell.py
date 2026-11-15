@@ -1,4 +1,8 @@
-"""Command execution. shell=False, allowlist, denylist, workspace-confined args, timeout."""
+"""Command execution. shell=False, allowlist, workspace-confined args, timeout.
+
+Allowlisting a command does not make project code safe: interpreters, test runners and
+package scripts are always treated as risky and require an interactive approval.
+"""
 from __future__ import annotations
 
 import os
@@ -12,7 +16,7 @@ from pathlib import Path
 from ..safety.workspace import SecurityError
 from .base import ToolContext
 
-ALLOWED = {  # exe -> allowed first args (None = any)
+ALLOWED = {
     "python": None, "python3": None, "py": None, "pytest": None, "node": None, "php": None,
     "tsc": None, "javac": None, "java": None, "g++": None, "gcc": None, "clang++": None,
     "git": {"status", "diff", "log", "show", "branch", "ls-files"},
@@ -21,10 +25,20 @@ ALLOWED = {  # exe -> allowed first args (None = any)
     "npx": {"tsc", "jest", "eslint", "vitest"},
     "dotnet": {"build", "test", "run"},
 }
+# These commands execute project-controlled code or scripts. They must never be
+# auto-approved by --yes-commands, even when their executable is allowlisted.
+CODE_EXECUTORS = {
+    "python", "python3", "py", "pytest", "node", "php", "java",
+}
+SCRIPT_SUBCOMMANDS = {
+    "npm": {"test", "run"},
+    "npx": {"jest", "eslint", "vitest"},
+    "dotnet": {"test", "run"},
+}
 DENIED = {"rm", "rmdir", "del", "erase", "rd", "format", "shutdown", "restart", "mkfs", "dd", "diskpart",
           "reg", "takeown", "icacls", "chmod", "chown", "sudo", "runas", "taskkill", "kill", "cmd",
           "powershell", "pwsh", "bash", "sh", "wsl", "curl", "wget", "ssh", "scp", "net", "sc"}
-META = re.compile(r"[|&;<>`$]|\$\(")
+META = re.compile(r"[|&;<>\x60$]|\\$\\(")
 
 
 def _looks_like_path(a: str) -> bool:
@@ -32,9 +46,9 @@ def _looks_like_path(a: str) -> bool:
 
 
 def parse_command(ctx: ToolContext, command: str) -> tuple[list[str], str]:
-    """Returns (argv, risk) where risk is 'command' (allowlisted) or 'risky_command'. Raises SecurityError."""
+    """Return argv and risk level. 'risky_command' always needs interactive approval."""
     if META.search(command):
-        raise SecurityError("shell operators (| & ; < > ` $) are not allowed; run one plain command")
+        raise SecurityError("shell operators (| & ; < > \\x60 $) are not allowed; run one plain command")
     try:
         argv = shlex.split(command, posix=(os.name != "nt"))
     except ValueError as e:
@@ -46,17 +60,21 @@ def parse_command(ctx: ToolContext, command: str) -> tuple[list[str], str]:
         raise SecurityError(f"command '{exe}' is blocked for safety")
     for a in argv[1:]:
         if not a.startswith("-") and _looks_like_path(a):
-            ctx.ws.resolve(a)           # raises if outside workspace
+            ctx.ws.resolve(a)
         elif a.startswith("--") and "=" in a and _looks_like_path(a.split("=", 1)[1]):
             ctx.ws.resolve(a.split("=", 1)[1])
+
     risk = "risky_command"
     if exe in ALLOWED:
         sub = ALLOWED[exe]
         first = next((a for a in argv[1:] if not a.startswith("-")), None)
-        if sub is None or (first in sub):
+        if sub is None or first in sub:
             risk = "command"
-        if exe in ("python", "python3", "py") and "-c" in argv[1:]:
-            risk = "risky_command"
+
+    # Never let the broad --yes-commands switch silently execute arbitrary
+    # project code via interpreters, test runners, or package lifecycle scripts.
+    if exe in CODE_EXECUTORS or first in SCRIPT_SUBCOMMANDS.get(exe, set()):
+        risk = "risky_command"
     return argv, risk
 
 
@@ -70,21 +88,21 @@ def _execute(ctx: ToolContext, argv: list[str], risk: str) -> str:
             return f"ERROR: '{argv[0]}' not found on PATH"
         argv = [resolved] + argv[1:]
     shown = " ".join(shlex.quote(a) for a in argv)
-    warn = "" if risk == "command" else "NOT on the safe allowlist - review carefully."
+    warn = ("Project-controlled code will execute with your operating-system permissions. "
+            "This is NOT a sandbox; inspect the command and project first.") if risk == "risky_command" else ""
     if not ctx.approver.confirm(risk, f"run: {shown}", warn):
         return "DENIED by user: command was not run."
     env = {k: v for k, v in os.environ.items() if not re.search(r"(KEY|TOKEN|SECRET|PASSWORD)", k, re.I)}
-    # Stale .pyc guard: a same-size edit within the same second would otherwise run the OLD bytecode.
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         p = subprocess.run(argv, cwd=ctx.ws.root, capture_output=True, text=True, errors="replace",
                            timeout=ctx.cfg.command_timeout, env=env, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return f"ERROR: timed out after {ctx.cfg.command_timeout}s (process killed)"
-    out = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr.strip() else "")
+    out = (p.stdout or "") + (("\\n[stderr]\\n" + p.stderr) if p.stderr.strip() else "")
     if len(out) > 5000:
-        out = out[:1500] + "\n...[output trimmed]...\n" + out[-3000:]
-    return f"exit code: {p.returncode}\n{out.strip()}"
+        out = out[:1500] + "\\n...[output trimmed]...\\n" + out[-3000:]
+    return f"exit code: {p.returncode}\\n{out.strip()}"
 
 
 def run_command(ctx: ToolContext, command: str) -> str:
