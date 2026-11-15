@@ -41,6 +41,16 @@ class IndexTests(unittest.TestCase):
         self.assertEqual((cs.modified, cs.added, cs.deleted), (["src/main.py"], ["new.py"], ["Api.java"]))
         self.assertFalse(self.index.refresh())
 
+    def test_index_cap_does_not_delete_unseen_files_from_partial_scan(self):
+        self.ctx.cfg.max_index_files = 1
+        (self.root / "0_new.py").write_text("new_value = 1\n")
+        cs = self.index.refresh()
+        self.assertIn("0_new.py", cs.added)
+        paths = {r[0] for r in self.index.db.execute("SELECT path FROM files")}
+        self.assertIn("src/main.py", paths)
+        self.assertIn("web/app.js", paths)
+        self.assertNotIn("src/main.py", cs.deleted)
+        self.assertNotIn("web/app.js", cs.deleted)
     def test_agent_own_edit_not_reported_as_external(self):
         self.reg.call("write_file", {"path": "mine.py", "content": "y = 2\n"})
         self.assertFalse(self.index.refresh())
