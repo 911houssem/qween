@@ -55,10 +55,11 @@ class E2E(unittest.TestCase):
             {"role": "assistant", "content": "tool call"},
             {"role": "user", "content": "Current task: fix the parser and keep this instruction."},
         ]
+        original_messages = [dict(message) for message in messages]
         fitted = a._fit(messages)
         self.assertLessEqual(a.backend.count_tokens(fitted), a.cfg.n_ctx - a.cfg.max_new_tokens - 64)
         self.assertIn("Current task: fix the parser", fitted[-1]["content"])
-        self.assertEqual(len(messages[1]["content"]), 20000)  # input history is not mutated
+        self.assertEqual(messages, original_messages)  # input history is not mutated
 
     def test_context_fit_rejects_impossible_system_prompt(self):
         a = self.make(["ok"])
