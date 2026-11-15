@@ -1,7 +1,9 @@
 import os
+import sys
 import unittest
 from helpers import make_env, MODEL_DIR
 from agent.safety.workspace import SecurityError, Workspace
+from agent.tools.shell import parse_command
 
 
 class SafetyTests(unittest.TestCase):
@@ -40,7 +42,20 @@ class SafetyTests(unittest.TestCase):
         self.ctx.approver.prompt = lambda q: False
         r = self.reg.call("edit_file", {"path": "a.py", "search": "x = 1", "replace": "x = 2"})
         self.assertIn("DENIED", r)
-        self.assertEqual((self.root / "a.py").read_text(), "x = 1\n")
+        self.assertEqual((self.root / "a.py").read_text(), "x = 1\\n")
+
+    def test_python_code_is_never_auto_approved_as_safe_command(self):
+        self.ctx.approver.auto_commands = True
+        argv, risk = parse_command(self.ctx, f'{sys.executable} -c "print(1)"')
+        self.assertEqual(Path(argv[0]).name.lower().removesuffix(".exe"), "python")
+        self.assertEqual(risk, "risky_command")
+
+    def test_test_and_package_scripts_require_interactive_approval(self):
+        self.ctx.approver.auto_commands = True
+        for command in ("pytest -q", "npm test", "npm run build", "dotnet test", "node app.js"):
+            with self.subTest(command=command):
+                _, risk = parse_command(self.ctx, command)
+                self.assertEqual(risk, "risky_command")
 
 
 if __name__ == "__main__":
