@@ -62,8 +62,8 @@ class E2E(unittest.TestCase):
 
     def test_context_fit_rejects_impossible_system_prompt(self):
         a = self.make(["ok"])
-        a.cfg.n_ctx = 100
-        a.cfg.max_new_tokens = 50
+        a.cfg.n_ctx = 1024
+        a.cfg.max_new_tokens = 128
         a.backend.count_tokens = lambda msgs: sum(len(m["content"]) for m in msgs)
         with self.assertRaisesRegex(ValueError, "System prompt alone"):
             a._fit([{"role": "system", "content": "S" * 1000},
