@@ -44,6 +44,31 @@ class E2E(unittest.TestCase):
         if hasattr(self, "td"):
             self.td.cleanup()
 
+    def test_context_fit_compresses_large_tool_output_and_preserves_task(self):
+        a = self.make(["ok"])
+        a.cfg.n_ctx = 8192
+        a.cfg.max_new_tokens = 768
+        a.backend.count_tokens = lambda msgs: sum(len(m["content"]) for m in msgs)
+        messages = [
+            {"role": "system", "content": a.system},
+            {"role": "user", "content": "<tool_response>\n" + ("A" * 20000) + "\n</tool_response>"},
+            {"role": "assistant", "content": "tool call"},
+            {"role": "user", "content": "Current task: fix the parser and keep this instruction."},
+        ]
+        fitted = a._fit(messages)
+        self.assertLessEqual(a.backend.count_tokens(fitted), a.cfg.n_ctx - a.cfg.max_new_tokens - 64)
+        self.assertIn("Current task: fix the parser", fitted[-1]["content"])
+        self.assertEqual(len(messages[1]["content"]), 20000)  # input history is not mutated
+
+    def test_context_fit_rejects_impossible_system_prompt(self):
+        a = self.make(["ok"])
+        a.cfg.n_ctx = 100
+        a.cfg.max_new_tokens = 50
+        a.backend.count_tokens = lambda msgs: sum(len(m["content"]) for m in msgs)
+        with self.assertRaisesRegex(ValueError, "System prompt alone"):
+            a._fit([{"role": "system", "content": "S" * 1000},
+                    {"role": "user", "content": "task"}])
+
     def test_fix_bug_and_verify_with_tests(self):
         a = self.make([call("run_tests"), call("read_file", path="calc.py"),
                        call("edit_file", path="calc.py", search="a - b", replace="a + b"),
