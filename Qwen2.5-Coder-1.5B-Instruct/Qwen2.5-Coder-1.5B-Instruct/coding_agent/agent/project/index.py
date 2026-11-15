@@ -120,6 +120,7 @@ class ProjectIndex:
 
     # -- scanning ---------------------------------------------------------
     def iter_files(self):
+        self._scan_truncated = False
         n = 0
         for dp, dns, fns in os.walk(self.ws.root):
             dns[:] = sorted(d for d in dns if d not in IGNORE_DIRS)
@@ -134,7 +135,9 @@ class ProjectIndex:
                     continue
                 n += 1
                 if n > self.cfg.max_index_files:
-                    log.warning("index file cap reached (%d)", self.cfg.max_index_files)
+                    self._scan_truncated = True
+                    log.warning("index file cap reached (%d); deletion reconciliation skipped for this partial scan",
+                                self.cfg.max_index_files)
                     return
                 yield full
 
@@ -181,10 +184,11 @@ class ProjectIndex:
                     cs.modified.append(rel)
             elif self._index_file(full, st):
                 cs.added.append(rel)
-        for rel in set(known) - seen:
-            for t in ("files", "chunks", "symbols"):
-                self.db.execute(f"DELETE FROM {t} WHERE path=?", (rel,))
-            cs.deleted.append(rel)
+        if not self._scan_truncated:
+            for rel in set(known) - seen:
+                for t in ("files", "chunks", "symbols"):
+                    self.db.execute(f"DELETE FROM {t} WHERE path=?", (rel,))
+                cs.deleted.append(rel)
         self.db.commit()
         if first_run:
             cs = ChangeSet()   # nothing is "changed" on the very first scan

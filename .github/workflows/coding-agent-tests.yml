@@ -1,0 +1,25 @@
+name: Coding Agent Tests
+
+on:
+  pull_request:
+    paths:
+      - "Qwen2.5-Coder-1.5B-Instruct/Qwen2.5-Coder-1.5B-Instruct/coding_agent/**"
+      - ".github/workflows/coding-agent-tests.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "Qwen2.5-Coder-1.5B-Instruct/Qwen2.5-Coder-1.5B-Instruct/coding_agent/**"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Qwen2.5-Coder-1.5B-Instruct/Qwen2.5-Coder-1.5B-Instruct/coding_agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run unit and integration tests
+        run: python -m unittest discover -s tests -v
