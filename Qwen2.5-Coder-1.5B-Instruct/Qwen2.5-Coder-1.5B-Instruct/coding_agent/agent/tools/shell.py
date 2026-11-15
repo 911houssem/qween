@@ -13,8 +13,8 @@ ALLOWED = {
     "npx": {"tsc", "jest", "eslint", "vitest"}, "dotnet": {"build", "test", "run"},
 }
 CODE_EXECUTORS = {"python", "python3", "py", "pytest", "node", "php", "java"}
-SCRIPT_SUBCOMMANDS = {"npm": {"test", "run"}, "npx": {"jest", "eslint", "vitest"},
-                      "dotnet": {"test", "run"}}
+SCRIPT_SUBCOMMANDS = {"npm": {"test", "run"}, "npx": {"tsc", "jest", "eslint", "vitest"},
+                      "dotnet": {"build", "test", "run"}}
 DENIED = {"rm", "rmdir", "del", "erase", "rd", "format", "shutdown", "restart", "mkfs", "dd", "diskpart",
           "reg", "takeown", "icacls", "chmod", "chown", "sudo", "runas", "taskkill", "kill", "cmd",
           "powershell", "pwsh", "bash", "sh", "wsl", "curl", "wget", "ssh", "scp", "net", "sc"}
