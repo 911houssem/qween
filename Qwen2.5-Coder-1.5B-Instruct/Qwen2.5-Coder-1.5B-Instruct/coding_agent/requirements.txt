@@ -1,0 +1,4 @@
+# The agent core uses only the Python standard library (Python 3.10+).
+# Install ONE inference backend:
+#   original path (transformers):  pip install -r requirements-hf.txt
+#   lighter optional path (GGUF):  pip install llama-cpp-python

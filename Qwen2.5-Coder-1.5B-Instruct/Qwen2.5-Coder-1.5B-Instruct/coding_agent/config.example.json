@@ -1,0 +1,12 @@
+{
+  "backend": "hf",
+  "dtype": "bfloat16",
+  "n_ctx": 8192,
+  "max_new_tokens": 768,
+  "temperature": 0.2,
+  "max_steps": 8,
+  "command_timeout": 90,
+  "auto_approve_edits": false,
+  "auto_approve_commands": false,
+  "docs_dirs": ["docs"]
+}
